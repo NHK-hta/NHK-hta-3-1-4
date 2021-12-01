@@ -1,0 +1,273 @@
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=Shift_JIS"> 
+
+<title>NHK.hta Timer</title>
+<!--				TOMURA Hiromi	-->
+
+<script Language="VBScript">
+<!--
+Option Explicit   ' 変数に対して、明示的な宣言を強制します。
+
+
+'Window.ReSizeTo 270, 180
+Window.ReSizeTo 320, 240
+
+
+Class class_timer
+	public	yobi,h,m,arg
+	public	id,flag
+	public	schedule_time
+	public	count
+
+	public function str
+		str = yobi & " " & h & ":" & m & " " & arg
+	end function
+
+	public function schedule(genzai)
+		schedule = dateValue(genzai)
+		while cStr(weekdayName(weekday(schedule),true)) <> cStr(yobi)
+			schedule = dateAdd("d",1,schedule)
+			'msgbox schedule
+		wend
+		schedule = schedule & " " & h & ":" & m & ":00"
+		'msgbox schedule
+	end function
+
+end Class
+
+dim timer
+set timer = new class_timer
+timer.id = 0
+
+dim cur
+set cur = new class_timer
+
+dim form
+dim form_copy_flag
+form_copy_flag = true
+
+Sub start_OnClick	   '＜OK＞ﾎﾞﾀﾝのOnClickｲﾍﾞﾝﾄﾌﾟﾛｼｰｼﾞｬ  
+	dim yobi, h, m, arg
+
+	if form_copy_flag then
+		Set form = Document.timerfrm		'ｵﾌﾞｼﾞｪｸﾄを変数に格納
+	end if
+	form_copy_flag = true
+
+	if timer.id > 0 then
+		clearInterval(timer.id)
+	end if
+
+	timer.yobi = form.weekday.value
+	timer.h = form.h.value
+	timer.m = form.m.value
+	timer.arg = form.arg.value
+	timer.schedule_time = timer.schedule(now)
+
+	form.time.value = timer.str
+	write_time
+
+	read_log()
+	add_log(timer.str)
+
+	timer.id = setInterval("Check_time", 2000)
+
+End Sub
+
+
+
+dim timer_log(10000), timer_c, timer_s
+timer_c = 0
+timer_s = 0
+
+Sub call_log_OnClick
+	if form_copy_flag then
+		Set form = Document.timerfrm		'ｵﾌﾞｼﾞｪｸﾄを変数に格納
+	end if
+	form_copy_flag = true
+	read_log
+	if timer_c > 0 then
+		dim a
+		a = timer_log(timer_s)
+		form.weekday.value = left(a,1)
+		form.h.value = mid(a,3,2)
+		form.m.value = mid(a,6,2)
+		form.arg.value = mid(a,9,20)
+		form_copy_flag = false
+		start_OnClick
+		timer_s = timer_s - 1
+		if timer_s <=0 then
+			timer_s = timer_c
+		end if
+	end if
+End sub
+
+sub add_log(str)
+	dim i
+	for i=1 to timer_c
+		if timer_log(i)=str then
+			timer_s = i
+			exit sub
+		end if
+	next
+	timer_c = timer_c + 1
+	timer_log(timer_c) = str
+	timer_s = timer_c
+	
+	dim objFso, objFile
+	Set objFso = CreateObject("Scripting.FileSystemObject")
+	Set objFile = objFso.OpenTextFile("timer_log.txt", 2, True)
+
+	for i=1 to timer_c
+		objFile.WriteLine timer_log(i)
+	next
+
+	objFile.Close
+	Set objFile = Nothing
+	Set objFso = Nothing
+
+end sub
+
+dim read_log_flag
+read_log_flag = true
+sub read_log
+	if read_log_flag then
+		dim	objFso, objFile
+		Set objFso = CreateObject("Scripting.FileSystemObject")
+
+		If objFso.FileExists("timer_log.txt") Then
+			Set objFile = objFso.OpenTextFile("timer_log.txt", 1, False)
+			Do Until objFile.AtEndOfStream
+				timer_c = timer_c + 1
+				timer_log(timer_c) = objFile.ReadLine
+			Loop
+			timer_s = timer_c
+			objFile.close
+		End If
+
+		set objFile = nothing
+		Set objFso = Nothing
+	end if
+	read_log_flag = false
+end sub
+
+
+sub write_time
+	dim cur_tmp
+	cur_tmp=now
+	cur.yobi=weekdayname(weekday(cur_tmp),true)
+	cur.h=hour(cur_tmp)
+	if cur.h < 10 then
+		cur.h = "0" & cur.h
+	end if
+	cur.m=minute(cur_tmp)
+	if cur.m < 10 then
+		cur.m = "0" & cur.m
+	end if
+	cur.arg = ""
+	form.now.value=cur.str
+end sub
+
+timer.flag=true
+
+sub Check_time
+
+	write_time
+	dim wshell : set wshell = CreateObject("WScript.Shell")
+
+	if cStr(timer.yobi)=cStr(cur.yobi) and cStr(timer.h)=cStr(cur.h) and cStr(timer.m)=cStr(cur.m) then
+		if timer.flag then
+			wshell.Run "NHK.hta " & timer.arg, 1, True
+			timer.flag=false
+			timer.schedule_time = timer.schedule(DateAdd("d",1,now))
+		end if
+	else
+		timer.flag=true
+		if datediff("n", now, timer.schedule_time) < 0 then
+			timer.count = timer.count + 1
+			if timer.count > 5 then
+				wshell.Run "NHK.hta " & timer.arg, 1, True
+				timer.flag=false
+				timer.schedule_time = timer.schedule(DateAdd("d",1,now))
+				timer.count = 0
+			end if
+		end if
+
+	end if
+
+end sub
+
+
+-->
+</script>
+</head>
+<body>
+<FORM name="timerfrm">
+	<select name="weekday">
+		<option value="月">月</option>
+		<option value="火">火</option>
+		<option value="水">水</option>
+		<option value="木">木</option>
+		<option value="金">金</option>
+		<option value="土">土</option>
+		<option value="日">日</option>
+	</select>
+	<select name="h">
+		<option value="00">00時</option>
+		<option value="01">01時</option>
+		<option value="02">02時</option>
+		<option value="03">03時</option>
+		<option value="04">04時</option>
+		<option value="05">05時</option>
+		<option value="06">06時</option>
+		<option value="07">07時</option>
+		<option value="08">08時</option>
+		<option value="09">09時</option>
+		<option value="10">10時</option>
+		<option value="11">11時</option>
+		<option value="12">12時</option>
+		<option value="13">13時</option>
+		<option value="14">14時</option>
+		<option value="15">15時</option>
+		<option value="16">16時</option>
+		<option value="17">17時</option>
+		<option value="18">18時</option>
+		<option value="19">19時</option>
+		<option value="20">20時</option>
+		<option value="21">21時</option>
+		<option value="22">22時</option>
+		<option value="23">23時</option>
+		<option value="24">24時</option>
+	</select>
+	<select name="m">
+		<option value="00">00分</option>
+		<option value="05">05分</option>
+		<option value="10">10分</option>
+		<option value="15">15分</option>
+		<option value="20">20分</option>
+		<option value="25">25分</option>
+		<option value="30">30分</option>
+		<option value="35">35分</option>
+		<option value="40">40分</option>
+		<option value="45">45分</option>
+		<option value="50">50分</option>
+		<option value="55">55分</option>
+	</select>
+	<br>
+	<select name="arg">
+		<option value="-auto">-auto</option>
+		<option value="-auto -autoexit">-auto -autoexit</option>
+	</select>
+	<INPUT type="button" value="Start" name="start"> 
+	<br>
+	<INPUT type="button" value="過去の設定↑" name="call_log"> 
+	<br>
+	起動
+	<INPUT type="text" value="" name="time" style="color:#ff0000" size="26">
+	<br>
+	現在
+	<INPUT type="text" value="" name="now" style="color:#0000ff" size="26">
+</FORM>
+</body>
+</html>

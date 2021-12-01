@@ -1,0 +1,1581 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html lang="ja">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=Shift_JIS"> 
+
+<title> NHK.hta 　NHKラジオ講座ダウンローダ 　ver-3.1.4　2019-06-28 版 </title>
+<!--													TOMURA Hiromi	-->
+
+<HTA:APPLICATION  
+     ID="objArguments" 
+     APPLICATIONNAME="Command Line Arguments" 
+     SINGLEINSTANCE="yes" 
+> 
+
+<script Language="VBScript" src="lib/ini_file.vbs"> </script>
+<script Language="VBScript" src="lib/NHK_ini.vbs"> </script>
+<script Language="VBScript" src="lib/etc.vbs"> </script>
+<script Language="VBScript" src="lib/revArray.vbs"> </script>
+<script Language="VBScript" src="lib/date.vbs"> </script>
+<script Language="VBScript">
+<!--
+Option Explicit   ' 変数に対して、明示的な宣言を強制します。
+
+const kouza_dim=30
+dim url_xml(30),kouza_name(30),kouza_select(30)
+dim	kouza_link(31),next_kouza(30),pre_kouza(30)
+dim cur_kouza,nkouza,kouza_count
+dim nflv(30)
+const	daily_dim=1000
+Dim flv_file(30,1000),hdate(30,1000),flv_select(30,1000),kouza(30,1000),flv_initial(30,1000)
+Dim flv_year(30,1000),track(30,1000)
+dim flv_name(30,1000), mp3_name(30,1000), base_name(30,1000), yobi(30,1000)
+dim flv_size(30,1000),mp3_size(30,1000)
+
+dim user_name, computer_name
+dim unicode_flag : unicode_flag=false
+'	dim m0_flag : m0_flag=false
+'	dim flv_delete_flag : flv_delete_flag=false
+dim aac_flag : aac_flag=false
+dim m4a_flag : m4a_flag=false
+dim base_date, cur_now
+dim original_name : original_name=false
+
+const mp3high="48"
+const mp3middle="32"
+const mp3low="16"
+dim mp3den : mp3den=mp3high
+
+const parameter_file="NHK_param5.txt"
+'const flvstreamer="rtmpdump"
+const ffmpeg="ffmpeg.exe"
+const id3s="id3s.exe"
+const bat_name="download.bat"
+
+'const flv_default="flv" : dim flv_folder : flv_folder = flv_default
+const mp3_default="mp3" : dim mp3_folder : mp3_folder = mp3_default
+dim sub_folder_flag : sub_folder_flag = false
+
+dim auto_flag : auto_flag=false
+dim autoexit_flag : autoexit_flag=false
+
+dim	rtmp_dir(30)		'rtmp のbase-name
+'dim	random_xml		'random code の xml の url
+'dim	random_mask		'週変わりランダムコードに変換する名前
+'dim	search_kouza_num	'調べて見る講座の番号
+'const	random_input_file="random_input.txt"
+'----------------------------------------------------------------
+dim phase, return_pos
+const phase_initial=0
+const phase_kouza=1
+const phase_daily=2
+const phase_option=3
+const phase_nothing=4
+phase=phase_initial
+return_pos=phase_nothing
+
+'----------------------------------------------------------------
+
+sub initialize_all
+
+	phase = phase_initial
+
+	const x_win_len=1200, y_win_len=600
+	Window.ReSizeTo x_win_len, y_win_len
+	Window.moveTo ((screen.availWidth -x_win_len)/2),((screen.availHeight -y_win_len)/2)
+
+	set_user_name user_name, computer_name
+
+	cur_now=now()
+	base_date=get_base_date(cur_now)
+
+	'dim flvstreamerhelp
+	'exec_check flvstreamer,flvstreamer & " --help",flvstreamerhelp
+	'flvstreamer_option_check flvstreamerhelp
+
+	dim dummy
+	exec_check ffmpeg , ffmpeg & " -h" , dummy
+	'msgbox "exec_check 終り"
+
+	clr_kouza kouza_select, kouza_dim
+	'msgbox "clr_kouza 終り"
+
+	parameter_read
+	'msgbox "parameter_read 終り"
+
+	clr_flv_select 0
+
+	option_initialize
+
+	all_folder_check
+
+	'random_code_initialize
+	
+	arguments_check
+
+end sub
+
+'*******************************************************************************
+
+sub arguments_check
+	dim arg
+	'msgbox objArguments.commandLine
+	For Each arg in Split(objArguments.commandLine)
+		'msgbox arg
+		if arg = "-auto" then
+			'msgbox "auto"
+			auto_flag = true
+		elseif arg="-autoexit" then
+			'msgbox "autoexit"
+			autoexit_flag = true
+		end if
+	Next
+end sub
+
+sub size_check(num)
+	dim	i
+	if num = 0 then
+		for i = 1 to nkouza
+			size_check i
+		next
+	elseif num >= 1 and num <= kouza_dim then
+		if kouza_select(num) then
+			for i = 1 to nflv(num)
+				'flv_size(num,i) = get_file_size(flv_name(num,i))
+				mp3_size(num,i) = get_file_size(mp3_name(num,i))
+			next
+			'set_size_checked(num)
+		end if
+	else
+		msgbox "内部エラー in size_check 講座番号が異常です : " & Cstr(num)
+		Window.Close
+	end if
+end sub
+
+sub clr_flv_select(num)
+	dim i,j
+	if num = 0 then
+		for i = 1 to kouza_dim
+			clr_flv_select i
+		next
+	elseif num>= 1 and num <=kouza_dim then
+		for j = 1 to daily_dim
+			flv_select(num,j) = False
+		next
+	else
+		msgbox "内部エラー in clr_flv_select 講座番号が異常です : " & Cstr(num)
+		Window.Close
+	end if
+end sub
+
+sub set_flv_select(num)
+	dim i,j
+	if num = 0 then
+		for i = 1 to nkouza
+			set_flv_select i
+		next
+	elseif num>= 1 and num <=kouza_dim then
+		if kouza_select(num) then
+			for j = 1 to nflv(num)
+				flv_select(num,j) = true
+			next
+		end if
+	else
+		msgbox "内部エラー in set_flv_select 講座番号が異常です : " & Cstr(num)
+	end if
+end sub
+
+sub read_flv_select(num)
+	dim i,j,n,str
+	if num = 0 then
+		for i = 1 to nkouza
+			read_flv_select i
+		next
+	elseif num>= 1 and num <=kouza_dim then
+		if kouza_select(num) then
+			ini_search "[" & kouza_name(num) & "]", key_check, str, n
+			'msgbox "read_flv_select : str='" & str & "'"
+			if str = "0" then
+				unpack_flag_2d "", flv_select, num, nflv(num)
+			elseif str = "" then
+				for j = 1 to nflv(num)
+					flv_select(num,j) = true
+				next
+			else
+				unpack_flag_2d str, flv_select, num, nflv(num)
+			end if
+		end if
+	else
+		msgbox "内部エラー in read_flv_select 講座番号が異常です : " & Cstr(num)
+	end if
+end sub
+
+sub write_flv_select(num)
+	dim i,j,n,str
+	if num = 0 then
+		for i = 1 to nkouza
+			set_flv_select i
+		next
+	elseif num>= 1 and num <=kouza_dim then
+		if kouza_select(num) then
+			ini_add "["&kouza_name(num)&"]", key_check,_
+									pack_flag_2d(flv_select,num,nflv(num))
+		end if
+	else
+		msgbox "内部エラー in write_flv_select 講座番号が異常です : " & Cstr(num)
+	end if
+end sub
+
+sub write_flv_initial(num)
+	dim i,j,n,str
+	if num>= 1 and num <=kouza_dim then
+		if kouza_select(num) then
+			ini_add "["&kouza_name(num)&"]", key_check,_
+									pack_flag_2d(flv_initial,num,nflv(num))
+		end if
+	else
+		msgbox "内部エラー in write_flv_select 講座番号が異常です : " & Cstr(num)
+	end if
+end sub
+
+function get_download_count(num)
+	dim retval,i,j
+	retval = 0
+	if num = 0 then
+		for i = 1 to nkouza
+			retval = retval + get_download_count(i)
+		next
+	elseif num>= 1 and num <=kouza_dim then
+		if kouza_select(num) then
+			for j = 1 to nflv(num)
+				if flv_select(num,j) then
+					retval = retval + 1
+				end if
+			next
+		end if
+	else
+		msgbox "内部エラー in get_download_count 講座番号が異常です : " & Cstr(num)
+	end if
+	get_download_count = retval
+end function
+
+sub download(num,mp3only)
+	dim wshell : set wshell = CreateObject("WScript.Shell")
+	dim fso : set fso = CreateObject("Scripting.FileSystemObject")
+	Dim bat
+	dim	j,i
+
+	Const ForWriting = 2
+	On Error Resume Next
+	Set bat = fso.OpenTextFile(bat_name, ForWriting, True)
+	if Err.Number <> 0 then
+		MsgBox "作業ファイル """ & bat_name & """ が開けません" & vbNewLine & _
+		       	"エラー番号 " & CStr(Err.Number) & " " & Err.Description
+		On Error Goto 0
+		Window.Close
+	end if
+	On Error Goto 0
+	'bat.WriteLine "if not exist " & flv_folder & "\con mkdir " & flv_folder
+	'bat.WriteLine "if not exist " & mp3_folder & "\con mkdir " & mp3_folder
+	'bat.WriteLine
+	sub_bat_write bat, num, mp3only
+	bat.Close
+
+	'msgbox "ちょっと待っています。すぐにクリックしてください"
+	wshell.Run bat_name,1,True
+
+	set fso = nothing
+	set wshell = nothing
+end sub
+
+sub sub_bat_write(bat, i, mp3only)
+	if i >= 1 and i <= nkouza then
+		if kouza_select(i) then
+			bat.WriteLine "rem " & kouza_name(i)
+			bat.WriteLine
+			for j=1 to nflv(i)
+				if flv_select(i,j) then
+					'if not mp3only then
+					'	bat.WriteLine flvstreamer_command(i,j)
+					'end if
+					bat.WriteLine mp3_command(i,j)
+					'if (not aac_flag) and (not m4a_flag) then
+					'	bat.WriteLine tagdel_command(i,j)
+					'	bat.WriteLine tagWrite_command(i,j)
+					'end if
+					bat.WriteLine
+				end if
+			next
+		end if
+	elseif i = 0 then
+		dim j
+		for j = 1 to nkouza
+			sub_bat_write bat,j,mp3only
+		next
+	else
+		msgbox "内部エラー sub_bat_write 講座番号が異常です : " & Cstr(i)
+	end if
+end sub
+
+function mp3_command(i,j)
+	dim regEx : set regEx = New RegExp   ' 正規表現を作成します。
+	dim url,tag_part
+	regEx.IgnoreCase = True
+	regEx.Global = False
+	regEx.Pattern = "\.flv$"
+
+	url=regEx.Replace(flv_file(i,j),"")
+	url= rtmp_dir(i) & url & "/master.m3u8"
+
+	tag_part = " -id3v2_version 3" & _
+				" -metadata artist=""NHK""" & _
+				" -metadata title=""" & kouza(i,j) & " " & hdate(i,j) & """" & _
+				" -metadata album=""" & kouza(i,j) & """" & _
+				" -metadata date=""" & CStr(flv_year(i,j)) & """" & _
+				" -metadata track=""" & CStr(track(i,j)) & """"
+
+	if m4a_flag then
+		mp3_command = ffmpeg & " -y -i """ & url & """ " & tag_part & _
+				" -vn -bsf aac_adtstoasc -acodec copy """ & mp3_name(i,j) & """"
+	elseif aac_flag then
+		mp3_command = ffmpeg & " -y -i """ & url & """ " & tag_part & " -vn -acodec copy """ & mp3_name(i,j) & """"
+	else
+		if mp3den=mp3low then
+			mp3_command = ffmpeg & " -y -vn -v verbose -i """ & url & """ " & tag_part & _ 
+					" -ab 16k -ar 12000 -ac 1 """ & mp3_name(i,j) & """"
+		elseif mp3den=mp3middle then
+			mp3_command = ffmpeg & " -y -vn -v verbose -i """ & url & """ " & tag_part & _ 
+					" -ab 32k -ar 24000 -ac 1 """ & mp3_name(i,j) & """"
+		else
+			mp3_command = ffmpeg & " -y -vn -v verbose -i """ & url & """ " & tag_part & _ 
+					" -ab 48k -ar 24000 -ac 1 """ & mp3_name(i,j) & """"
+		end if
+	end if
+
+	set regEx = nothing
+end function
+
+function tagdel_command(i,j)
+	tagdel_command =id3s & " -d -2 """ & mp3_name(i,j) & """"
+end function
+
+function tagWrite_command(i,j)
+	dim uni
+	if unicode_flag then
+		uni = " -u "
+	else
+		uni = ""
+	end if
+	tagWrite_command =id3s & uni & " -2 -a NHK" & _
+						" -t """ & kouza(i,j) & " " & hdate(i,j) & """" & _
+						" -n " & CStr(track(i,j)) & _
+						" -y " & CStr(flv_year(i,j)) & _
+						" -l """ & kouza(i,j) & """ """ & mp3_name(i,j) & """"
+end function
+
+
+sub get_flv_file
+	dim regEx : set regEx = New RegExp   ' 正規表現を作成します。
+	Dim obj, NodeList
+	dim objxml
+	dim i,s,m,d,list_num,n,temp(10000)
+	dim hizuke
+	dim flv_debug
+	dim	full_date
+	'dim t_status, t_msg
+
+	if kouza_count <= 0 or kouza_count > nkouza then
+		msgbox "内部エラー 講座数が異常な値です : " & CStr(kouza_count)
+		exit sub
+	end if
+
+	for i = 1 to nkouza
+		if kouza_select(i) then
+			Set objxml = CreateObject("MSXML.DOMDocument")
+			objxml.async = False
+			If objxml.load(url_xml(i)) Then
+				Set nodeList = objxml.documentElement.selectNodes("/musicdata/music")
+				list_num=0
+				For Each obj In nodeList
+					list_num = list_num + 1
+					'if list_num>10 then list_num=list_num-10
+					nflv(i) = list_num
+					kouza(i,list_num) = obj.getattribute("kouza")
+					hdate(i,list_num) = obj.getattribute("hdate")
+					flv_file(i,list_num) = obj.getattribute("file")
+					'msgbox flv_file(i,list_num)
+
+					track(i,list_num)=get_diff_day(hdate(i,list_num),base_date)
+					flv_year(i,list_num)=get_last_year(hdate(i,nflv(i)),base_date)
+
+					regEx.Pattern = "放送.*"	:regEx.IgnoreCase = True	:regEx.Global = False
+					full_date=flv_year(i,list_num) & "年" & regEx.Replace(hdate(i,list_num),"")
+					yobi(i,nflv(i)) = WeekdayName(Weekday(full_date))
+
+					regEx.Pattern = "月.*"	:regEx.IgnoreCase = True	:regEx.Global = False
+					m=regEx.Replace(hdate(i,list_num),"")
+					if len(m) <= 1 then
+						m = "0" & m
+					end if
+
+					regEx.Pattern = ".*月"	:regEx.IgnoreCase = True	:regEx.Global = False
+					d=regEx.Replace(hdate(i,list_num),"")
+					regEx.Pattern = "日.*"	:regEx.IgnoreCase = True	:regEx.Global = False
+					d=regEx.Replace(d,"")
+					if len(d) <=1 then
+						d = "0" & d
+					end if
+
+					hizuke = m & "-" & d
+					base_name(i,list_num) = kouza(i,list_num) & "_" & flv_year(i,list_num) & "-" & hizuke
+
+					'MsgBox "kouza=" & kouza(i,list_num) & vbNewline & _
+					'		"hdate=" & hdate(i,list_num) & vbNewLine & _
+					'		"file=" & flv_file(i,list_num) & vbNewLine &_
+					'		"base-name=" & base_name(i,list_num)
+				Next
+				set nodeList=Nothing
+
+				'random_manager.check_random_code_status full_date, full_date, t_status, t_msg, true
+				'if t_status < 0 then
+				'	nflv(i)=0
+				'end if
+				if nflv(i) <= 0 then
+					msgbox  kouza_name(i) & vbNewLine & vbNewLine & "講座のデータが異常です"
+				else
+					flv_debug = false
+					if flv_debug then
+						msgbox "講座データ" & vbNewLine & kouza(i,1) & vbNewLine _
+								& hdate(i,1) & vbNewLine & flv_file(i,1) _
+								& vbNewLine & flv_name(i,1) & vbNewLine & mp3_name(i,1)
+					end if
+				end if
+			else
+				msgbox "読み込み失敗" & vbNewLine & kouza_name(i)
+			end if
+			Set objxml = Nothing
+			
+			if nflv(i) > 10 then
+				revArray	kouza,	i,nflv(i)
+				revArray	hdate,	i,nflv(i)
+				revArray	flv_file,i,nflv(i)
+				revArray	track,	i,nflv(i)
+				revArray	flv_year,i,nflv(i)
+				revArray	yobi,	i,nflv(i)
+				revArray	base_name,i,nflv(i)
+			end if
+		End If
+	Next
+
+	set regEx = nothing
+end sub
+
+sub make_file_name
+	dim i,j,base
+	dim regEx : set regEx = New RegExp   ' 正規表現を作成します。
+	for i=1 to nkouza
+		if kouza_select(i) then
+			for j=1 to nflv(i)
+				'flv_name(i,j) = flv_folder & "\" & base_name(i,j) & ".flv"
+				if not original_name then
+					base = base_name(i,j)
+				else
+					regEx.Pattern = ".mp4"	:regEx.IgnoreCase = True	:regEx.Global = False
+					base=regEx.Replace(flv_file(i,j),"")
+				end if
+				if not sub_folder_flag then
+					if m4a_flag then
+						mp3_name(i,j) = mp3_folder & "\" & base & ".m4a"
+					elseif aac_flag then
+						mp3_name(i,j) = mp3_folder & "\" & base & ".aac"
+					else
+						mp3_name(i,j) = mp3_folder & "\" & base & ".mp3"
+					end if
+				else
+					if m4a_flag then
+						mp3_name(i,j)=mp3_folder &"\"& kouza_name(i) &"\"& base & ".m4a"
+					elseif aac_flag then
+						mp3_name(i,j)=mp3_folder &"\"& kouza_name(i) &"\"& base & ".aac"
+					else
+						mp3_name(i,j)=mp3_folder &"\"& kouza_name(i) &"\"& base & ".mp3"
+					end if
+				end if
+			next
+		end if
+	next
+end sub
+
+sub exec_check(progname,command,helpstr)
+	dim wshell
+	set wshell = CreateObject("WScript.Shell")
+	dim objExec
+	On Error Resume Next
+	Set objExec = wshell.Exec(command)
+	if Err.Number <> 0 then
+		MsgBox progname & " を実行可能な場所(フォルダ)に置いてください" _
+				& vbNewLine & vbNewLine & _
+				"説明.txt にダウンロード先などが書いてあります" _
+				& vbNewLine & vbNewLine & _
+				"エラー番号 " & CStr(Err.Number) & vbNewLine & Err.Description
+		On Error Goto 0
+		Window.Close
+	end if
+	On Error Goto 0
+
+	helpstr = ""
+    while Not objExec.StdOut.AtEndOfStream
+          helpstr = helpstr & objExec.StdOut.ReadAll
+    wend
+    while Not objExec.StdErr.AtEndOfStream
+          helpstr = helpstr & objExec.StdErr.ReadAll
+    wend
+	'msgbox helpstr
+	'result = objExec.ExitCode
+	set objExec = nothing
+	set wshell = nothing
+end sub
+
+'*************************** parameter read ***********************************
+
+sub parameter_read
+	dim fso : set fso = CreateObject("Scripting.FileSystemObject")
+	dim regEx : set regEx = New RegExp   ' 正規表現を作成します。
+	Dim param_in
+	Dim Match, Matches
+	Dim Fld(100),nFld
+
+	Const ForReading=1
+	On Error Resume Next
+	Set param_in = fso.OpenTextFile(parameter_file, ForReading)
+	if Err.Number <> 0 then
+		MsgBox "ファイル """ & parameter_file & """ が開けません" & vbNewLine & _
+				"エラー番号 " & CStr(Err.Number) & vbNewLine & Err.Description
+		On Error Goto 0
+		Window.Close
+	end if
+	On Error Goto 0
+
+	dim rawtmp,tmp
+	nkouza=0
+
+	'dim read_switch : read_switch=1
+
+	Do Until param_in.AtEndOfStream
+		rawtmp = param_in.ReadLine
+		regEx.Pattern = "#.*"
+		regEx.IgnoreCase = False
+		regEx.Global = False
+		tmp=regEx.Replace(rawtmp, "")
+
+		' split が使い物にならんから無理やり
+		regEx.Pattern = "[^ ^	][^ ^	]*"
+		regEx.IgnoreCase = false
+		regEx.Global = True
+		Set Matches = regEx.Execute(tmp)
+		nFld = 0
+		For Each Match in Matches
+			nFld = nFld + 1
+			Fld(nFld) = Match
+		Next
+		'msgbox rawtmp & vbNewLine & tmp & vbNewLine & nFld
+
+		'if read_switch=1 then
+		'	if nFld >=1 then
+		'		rtmp_dir=Fld(1)
+		'		'msgbox "rtmp_dir=" & rtmp_dir
+		'		read_switch=2
+		'	end if
+		if nFld >= 3 then
+			nkouza = nkouza + 1
+			if nkouza > kouza_dim then
+				msgbox parameter_file & "の講座のデータ数が多すぎます " & _
+										 kouza_dim & " までです"
+				nkouza = kouza_dim
+				exit do
+			end if
+			rtmp_dir(nkouza) = Fld(1)
+			url_xml(nkouza) = Fld(2)
+			kouza_name(nkouza) = Fld(3)
+		end if
+	Loop
+
+	param_in.Close
+	set param_in = nothing
+	set fso = nothing
+	set regEx = nothing
+
+	if nkouza = 0 then
+		msgbox parameter_file & " : 講座のデータがありません"
+		Window.Close
+	end if
+end sub
+
+
+
+'**************************************************************************************
+
+sub kouza_select_check
+	dim	f
+	Set f = Document.kouzafrm		'ｵﾌﾞｼﾞｪｸﾄを変数に格納
+	dim	i, s, m
+	const offset=3	'前にボタンが4個あるからoffsetは、3
+		
+	For i = 1 To nkouza
+		s = f.Elements(i+offset).value 'ダブルチェックのためにセットした値
+		On Error Resume Next
+		m = CInt(s)
+		if Err.Number <> 0 then
+			MsgBox "kouzafrm " & CStr(i+offset) & " が異常: " & s & vbNewLine & _
+					"エラー番号 " & CStr(Err.Number) & vbNewLine & Err.Description
+			On Error Goto 0
+			Window.Close
+		end if
+		On Error Goto 0
+		if i<>m then
+			msgbox "kouzafrm i と m が違う : " & CStr(i) & "!=" & CStr(m)
+		end if
+		If f.Elements(i+offset).checked Then
+			kouza_select(m) = True
+		else
+			kouza_select(m) = False
+		End If
+	Next
+	const kouza_check_debug=false
+	if kouza_check_debug then
+		dim ch
+		ch=""
+		for i = 1 to nkouza
+			if kouza_select(i) then
+				ch = ch & kouza_name(i) & vbNewLine
+			end if
+		next
+		msgbox ch
+	end if
+end sub
+
+function set_kouza_count
+	dim	i
+	kouza_count=0
+	for i = 1 to nkouza
+		if kouza_select(i) then
+			kouza_count = kouza_count + 1
+			kouza_link(kouza_count) = i
+		end if
+	next
+	set_kouza_count = kouza_count
+	if kouza_count > 0 then
+		for i = 1 to nkouza
+			next_kouza(i) = kouza_link(1)
+			pre_kouza(i) = kouza_link(1)
+		next
+		kouza_link(0) = kouza_link(kouza_count)
+		kouza_link(kouza_count+1) = kouza_link(1)
+		for i = 1 to kouza_count
+			next_kouza(kouza_link(i))=kouza_link(i+1)
+			pre_kouza(kouza_link(i))=kouza_link(i-1)
+		next
+	else ' 一応用心のため
+		kouza_link(1)=1
+		kouza_link(0)=1
+		kouza_link(2)=1
+		next_kouza(1)=1
+		pre_kouza(1)=1
+		for i = 1 to nkouza
+			next_kouza(i) = 1
+			pre_kouza(i) = 1
+		next
+	end if
+end function
+
+Sub ok_kouza
+	dim	j,n
+	kouza_select_check
+	if set_kouza_count() = 0 then
+		msgbox "講座を選んでください"
+	else
+
+		'if random_code_status<0 then
+		'	msgbox "Random Code を設定してください"
+		'	exit sub
+		'end if
+		'random_manager.random_code_set(random_code)
+
+		wait_message
+		kouza_write
+		get_flv_file
+		all_folder_check
+		make_file_name
+		read_flv_select 0
+		for n=1 to nkouza
+			if kouza_select(n) then
+				for j = 1 to nflv(n)
+					flv_initial(n,j) = flv_select(n,j)
+				next
+			end if
+		next
+		size_check 0
+		cur_kouza=kouza_link(1)
+		daily_print
+	end if
+End Sub
+
+Sub go_selected_kouza
+	dim n,j
+	kouza_select_check
+	if set_kouza_count() = 0 then
+		msgbox "講座を選んでください"
+	else
+		'if random_code_status<0 then
+		'	msgbox "Random Code を設定してください"
+		'	exit sub
+		'end if
+		'random_manager.random_code_set(random_code)
+		wait_message
+		kouza_write
+		get_flv_file
+		all_folder_check
+		make_file_name
+		read_flv_select 0
+		download 0,false
+		for n=1 to nkouza
+			if kouza_select(n) then
+				for j = 1 to nflv(n)
+					flv_initial(n,j) = flv_select(n,j)
+				next
+			end if
+		next
+		clr_flv_select 0
+		size_check 0
+		cur_kouza=kouza_link(1)
+		daily_print
+	end if
+End Sub
+
+Sub all_kouza
+	kouza_select_check
+	if set_kouza_count() = 0 then
+		msgbox "講座を選んでください"
+	else
+		'if random_code_status<0 then
+		'	msgbox "Random Code を設定してください"
+		'	exit sub
+		'end if
+		'random_manager.random_code_set(random_code)
+		wait_message
+		kouza_write
+		get_flv_file
+		all_folder_check
+		make_file_name
+		set_flv_select 0
+		download 0,false
+		clr_flv_select 0
+		size_check 0
+		cur_kouza=kouza_link(1)
+		daily_print
+	end if
+End Sub
+
+sub quit_program
+	all_exit
+	Window.Close
+end sub
+
+Sub daily_set(i)
+	msgbox i
+	msgbox "test daily"
+end sub
+
+Sub kouza_print
+	dim	m,i
+	const row_lim=10
+	dim col_num, row_num, col_mod, col_c, row_pos(100), row_spc(100)
+
+	col_num = nkouza \ row_lim
+	if nkouza mod row_lim > 0 then
+		col_num = col_num + 1
+	end if
+
+	row_num = nkouza \ col_num
+	if col_num = 1 then
+		col_mod = 0
+	else
+		col_mod = nkouza mod col_num
+		if col_mod > 0 then
+			row_num = row_num + 1
+		end if
+	end if
+
+	if col_mod = 0 then
+		col_mod = col_num
+	end if
+	row_pos(0) = 0
+	for i = 1 to col_num
+		if i<=col_mod then
+			row_pos(i) = row_pos(i-1) + row_num
+			row_spc(i) = false
+		else
+			row_pos(i) = row_pos(i-1) + row_num - 1
+			row_spc(i) = true
+		end if
+	next
+	if nkouza <> row_pos(col_num) then
+		msgbox "内部エラー in kouza_print : nkouza <> row_pos(col_num)"
+	end if
+
+	m=	"<FORM name=""kouzafrm"">"
+	m=m&"<center>"
+
+	m=m & "<BR>"
+
+	m=m&"<INPUT type=""button"" value=""ダウンロード"" name=""kouza"" " & _
+				"onclick=""go_selected_kouza()"">"
+
+	m=m & "　"
+
+	m=m&"<INPUT type=""button"" value=""次へ"" name=""kouza"" " & _
+				"onclick=""ok_kouza()"">"
+
+	m=m & "　　　　　　　"
+
+	m=m&"<INPUT type=""button"" value=""設定"" name=""option_go"" " _
+	 		& " onclick=""kouza_option()"">"
+
+	m=m & "　　　　　　　"
+
+	m=m & "<INPUT type=""button"" value=""終了"" name=""quit"" " _
+			& "onclick=""quit_program()"">"
+
+	m=m & "<BR>"
+	m=m & "<BR>"
+
+	if col_num > 1 then
+		m=m&"<table> <tr><td>"
+	end if
+
+	m=m&"<table border>"
+	m=m&"<tr>"
+	m=m&"<td align=""center"">選択</td>"
+	m=m&"<td align=""center"">講座 </td>"
+	m=m&"</tr>"
+	col_c=1
+
+	for i=1 to nkouza
+		m=m&"<tr>"
+		m=m&"<td align=""center"">"
+		m = m & "<INPUT type=""checkbox"" name=""K" & CStr(i) & _
+				 """ value=""" & CStr(i) & """"
+		if kouza_select(i) then
+			m=m & " checked> "
+		else
+			m=m & " > "
+		end if
+		m=m&"</td>"
+		m=m&"<td align=""left"">"
+		m=m& kouza_name(i)
+		m=m&"</td>"
+		m=m&"</tr>"
+
+		if i=row_pos(col_c) then
+			if row_spc(col_c) then
+				m=m&"<tr> <td>　</td> <td></td> </tr>"
+			end if
+			m=m&"</table>"
+			if col_c < col_num then
+				m=m&"</td>"
+				m=m&"<td></td><td></td>"
+				m=m&"<td>"
+
+				m=m&"<table border>"
+				m=m&"<tr>"
+				m=m&"<td align=""center"">選択</td>"
+				m=m&"<td align=""center"">講座 </td>"
+				m=m&"</tr>"
+				col_c= col_c + 1
+			end if
+		end if
+
+	next
+
+	if col_num > 1 then
+		m=m&"</td></tr>"
+		m=m&"</table>"
+	end if
+
+
+	'	m=m & "<BR>"
+	'	m=m & "<BR>"
+	'	m=m & "======================================================================================"
+	'	m=m & "<BR>"
+	'	m=m & "<BR>"
+
+	'	m=m&"<table>"
+	'	m=m&"<tr>"
+	'	m=m&"<td>"
+
+	'	m=m&"<table border>"
+	'	m=m&"<tr>"
+	'	m=m&"<td align=""center"">次"
+	'	m=m&"<td align=""center"">Random Code"
+	'	m=m&"<td align=""center"">データの日付"
+	'	m=m&"<td align=""center"">現状"
+	'	m=m&"</tr>"
+	'	m=m&"<tr>"
+	'	m=m&"<td>"
+	'	m=m&"<INPUT type=""button"" value=""▼"" name=""next_random"" " _
+	'			& "onclick=""go_next_random()"">"
+	'	m=m&"<td align=""center"">" & random_code
+	'	m=m&"<td align=""center"">" & top_date
+	'	m=m&"<td align=""center""><b>" & random_code_msg & "</b>"
+	'	m=m&"</tr>"
+	'	m=m&"</table>"
+
+	'	m=m&"<td>"
+	'	m=m&"　　"
+
+	'	m=m&"<td>"
+	'	m=m & "<INPUT type=""button"" value=""Random Code の手入力"" name=""name_random_input"" " _
+	'			& "onclick=""input_random_code()"">"
+	'	m=m&"</tr>"
+	'	m=m&"</table>"
+
+	m=m & "</center>"
+    m=m & "</FORM>"
+	document.body.innerHTML = m
+	phase=phase_kouza
+	return_pos=phase_kouza
+
+	if auto_flag then
+		go_selected_kouza
+	end if
+
+End Sub
+
+sub kouza_option
+	kouza_select_check
+	option_print
+end sub
+
+sub daily_select_check
+	dim	f
+	Set f = Document.dailyfrm		'ｵﾌﾞｼﾞｪｸﾄを変数に格納
+	dim	i, s, m, offset
+	offset=2	'前にボタンが4個あるからoffsetは2
+	if kouza_count > 1 then
+		offset = offset +2
+	end if
+
+	For i = 1 To nflv(cur_kouza)
+		s = f.Elements(i*2+offset).value 'ダブルチェックのためにセットした値
+		On Error Resume Next
+		m = CInt(s)
+		if Err.Number <> 0 then
+			MsgBox " dailyfrm " & CStr(i+offset) & " が異常: " & s & vbNewLine & _
+					"エラー番号 " & CStr(Err.Number) & vbNewLine & Err.Description
+			On Error Goto 0
+			Window.Close
+		end if
+		On Error Goto 0
+		if i<>m then
+			msgbox "dailyfrm i と m が違う : " & CStr(i) & "!=" & CStr(m)
+		end if
+		If f.Elements(i*2+offset).checked Then
+			flv_select(cur_kouza,m) = True
+		else
+			flv_select(cur_kouza,m) = False
+		End If
+	Next
+	const daily_check_debug=false
+	if daily_check_debug then
+		dim ch
+		ch=""
+		for i = 1 to nflv(cur_kouza)
+			if flv_select(cur_kouza,i) then
+				ch = ch & kouza(cur_kouza,i) & " - " & hdate(cur_kouza,i) & vbNewLine
+			end if
+		next
+		msgbox ch
+	end if
+end sub
+
+sub daily_initial_check
+	dim	f
+	Set f = Document.dailyfrm		'ｵﾌﾞｼﾞｪｸﾄを変数に格納
+	dim	i, s, m, offset
+	offset=3	'前にボタンが4個あるからoffsetは3
+	if kouza_count > 1 then
+		offset = offset +2
+	end if
+
+	For i = 1 To nflv(cur_kouza)
+		s = f.Elements(i*2+offset).value 'ダブルチェックのためにセットした値
+		On Error Resume Next
+		m = CInt(s)
+		if Err.Number <> 0 then
+			MsgBox " dailyfrm " & CStr(i+offset) & " が異常: " & s & vbNewLine & _
+					"エラー番号 " & CStr(Err.Number) & vbNewLine & Err.Description
+			On Error Goto 0
+			Window.Close
+		end if
+		On Error Goto 0
+		if i<>m then
+			msgbox "dailyfrm i と m が違う : " & CStr(i) & "!=" & CStr(m)
+		end if
+		If f.Elements(i*2+offset).checked Then
+			flv_initial(cur_kouza,m) = True
+		else
+			flv_initial(cur_kouza,m) = False
+		End If
+	Next
+	const daily_check_debug=false
+	if daily_check_debug then
+		dim ch
+		ch=""
+		for i = 1 to nflv(cur_kouza)
+			if flv_initial(cur_kouza,i) then
+				ch = ch & kouza(cur_kouza,i) & " - " & hdate(cur_kouza,i) & vbNewLine
+			end if
+		next
+		msgbox ch
+	end if
+end sub
+
+
+Sub down_go
+	daily_select_check
+	if get_download_count(0) = 0 then
+		msgbox "講座を選んでください"
+	else
+		wait_message
+		download 0,false
+		clr_flv_select 0
+		size_check 0
+		daily_print
+	end if
+End Sub
+
+Sub mp3only
+	daily_select_check
+	if get_download_count(cur_kouza) = 0 then
+		msgbox "講座を選んでください"
+	else
+		wait_message
+		download cur_kouza,true
+		clr_flv_select cur_kouza
+		size_check cur_kouza
+		daily_print
+	end if
+End Sub
+
+sub size_recheck
+	size_check 0
+	daily_print
+end sub
+
+sub daily_add_ini
+	daily_initial_check
+	write_flv_initial cur_kouza
+end sub
+
+
+sub next_kouza_go
+	daily_select_check
+	daily_add_ini
+	cur_kouza = next_kouza(cur_kouza)
+	if not kouza_select(cur_kouza) then
+		msgbox "内部エラー in next_kouza 講座番号が正常でない :" & CStr(cur_kouza)
+		Window.Close
+	end if
+	daily_print
+end sub
+
+sub pre_kouza_go
+	daily_select_check
+	daily_add_ini
+	cur_kouza = pre_kouza(cur_kouza)
+	if not kouza_select(cur_kouza) then
+		msgbox "内部エラー in pre_kouza 講座番号が正常でない :" & CStr(cur_kouza)
+		Window.Close
+	end if
+	daily_print
+end sub
+
+
+Sub daily_print
+	dim m, i
+	m=  "<FORM name=""dailyfrm"">"
+	m=m & "<center>"
+	m=m&"<INPUT type=""button"" value=""ダウンロード"" name=""download"" " & _ 
+				 "onclick=""down_go()"">"
+	m=m&"　　　　<INPUT type=""button"" value=""サイズ再チェック"" name=""mp3"" " & _
+				"onclick=""size_recheck()"">"
+	if kouza_count > 1 then
+		m=m & "　<INPUT type=""button"" value=""＜＜"" name=""prekouza"" " & _
+				"onclick=""pre_kouza_go()"">"
+		m=m & "　<INPUT type=""button"" value=""＞＞"" name=""nextkouza"" " & _
+				"onclick=""next_kouza_go()"">"
+	end if
+	m=m&"　　　　　<INPUT type=""button"" value=""設定"" name=""option_go"" " _
+	 		& " onclick=""daily_option()"">"
+	m=m&"　　　　"
+	m=m & "<INPUT type=""button"" value=""終了"" name=""quit"" onclick=""quit_program()"">"
+
+	m=m&"<BR><BR>"
+	m=m&"<BR><BR>"
+
+	m=m&"<table border>"
+	m=m&"<tr>"
+	m=m&"<td align=""center"">選択</td>"
+	m=m&"<td align=""center"">初期選択</td>"
+	m=m&"<td align=""center"">講座</td>"
+	m=m&"<td align=""center"">放送日</td>"
+	m=m&"<td align=""center"">曜日</td>"
+	'	m=m&"<td align=""center"">flvのサイズ</td>"
+	m=m&"<td align=""center"">mp3のサイズ</td>"
+	m=m&"</tr>"
+	for i = 1 to nflv(cur_kouza)
+		m=m&"<tr>"
+		m=m&"<td align=""center"">"
+		m=m&"<INPUT type=""checkbox"" name=""K" &CStr(i)& """ value=""" &CStr(i)& """"
+		if flv_select(cur_kouza,i) then
+			m=m & " checked> "
+		else
+			m=m & " > "
+		end if
+		m=m&"</td>"
+		m=m&"<td align=""center"">"
+		m=m&"<INPUT type=""checkbox"" name=""I" &CStr(i)& """ value=""" &CStr(i)& """"
+		if flv_initial(cur_kouza,i) then
+			m=m & " checked> "
+		else
+			m=m & " > "
+		end if
+		m=m&"</td>"
+		m=m&"<td align=""center"">" & kouza(cur_kouza,i) & "</td>"
+		m=m&"<td align=""right"">" & hdate(cur_kouza,i) & "</td>"
+		m=m&"<td align=""center"">" & yobi(cur_kouza,i) & "</td>"
+	'		m=m&"<td align=""right"">" & flv_size(cur_kouza,i) & "</td>"
+		m=m&"<td align=""right"">" & mp3_size(cur_kouza,i) & "</td>"
+		m=m&"</tr>"
+	next
+	
+	for i = nflv(cur_kouza)+1 to 10
+		m=m&"<tr>"
+		m=m&"<td align=""center"">"
+		m=m&"<INPUT type=""checkbox"" name=""K" & CStr(i) & """ value=""" & _
+												CStr(i) & """ disabled>"
+		m=m&"</td>"
+		m=m&"<td align=""center"">　</td>"
+		m=m&"<td align=""center"">　</td>"
+		m=m&"<td align=""center"">　</td>"
+		m=m&"<td align=""center"">　</td>"
+		m=m&"<td align=""center"">　</td>"
+		m=m&"</tr>"
+	next
+	m=m&"</table>"
+	m=m & "</center>"
+    m=m & "</FORM>"
+	document.body.innerHTML = m
+	phase=phase_daily
+	return_pos=phase_daily
+	
+	if auto_flag and autoexit_flag then
+		Window.Close
+	end if
+	
+End Sub
+
+sub daily_option
+	daily_select_check
+	option_print
+end sub
+
+sub option_select_check
+	dim	f,i
+	Set f = Document.optionfrm		'ｵﾌﾞｼﾞｪｸﾄを変数に格納
+	unicode_flag=f.unicode.checked
+	'flv_delete_flag=f.delete.checked
+	'flv_folder=f.flv.value
+	mp3_folder=f.mp3.value
+	sub_folder_flag=f.sub_folder.checked
+	aac_flag=f.aac.checked
+	m4a_flag=f.m4a.checked
+	original_name=f.original_name.checked
+	for i=0 to 2
+		if f.mp3den(i).checked then
+			mp3den=f.mp3den(i).value
+		end if
+	next
+end sub
+
+Sub ok_option
+	option_select_check
+	'debug_option
+	all_folder_check
+	option_write
+	if return_pos=phase_kouza then
+		kouza_print
+	elseif return_pos=phase_daily then
+		make_file_name
+		size_check 0
+		daily_print
+	end if
+End Sub
+
+Sub cancel_option
+	if return_pos=phase_kouza then
+		kouza_print
+	elseif return_pos=phase_daily then
+		daily_print
+	end if
+End Sub
+
+sub flv_def
+	document.optionfrm.flv.value=flv_default
+end sub
+
+sub mp3_def
+	document.optionfrm.mp3.value=mp3_default
+end sub
+
+sub flv_search
+	dim	val
+	val = folder_search("flv のフォルダを選択してください")
+	if val <> "" then
+		document.optionfrm.flv.value=val
+	end if
+end sub
+
+sub mp3_search
+	dim	val
+	val = folder_search("mp3 のフォルダを選択してください")
+	if val <> "" then
+		document.optionfrm.mp3.value=val
+	end if
+end sub
+
+Function folder_search(arg_comment)
+	dim Shell, objFolder
+	Set Shell = CreateObject("Shell.Application")
+	Set objFolder = Shell.BrowseForFolder(0, arg_comment, 1)
+	If objFolder is Nothing then
+		folder_search = ""
+	Else
+		folder_search = objFolder.Items.Item.Path
+	End If
+End Function
+
+sub option_print
+	dim m
+	m=  "<FORM name=""optionfrm"">"
+	m=m&"<center>"
+	m=m&"<INPUT type=""reset"" value=""Reset"" name=""option_reset"">"
+	m=m&"　　　　"
+	m=m&"<INPUT type=""button"" value="" OK "" name=""ok"" onclick=""ok_option()"">"
+	m=m&"　　　　"
+	m=m&"<INPUT type=""button"" value=""Cancel"" name=""cancel"" " _
+			& "onclick=""cancel_option()"">"
+	m=m&"<BR><BR>"
+	m=m&"<table border>"
+
+	m=m&"<tr>"
+	m=m&	"<td align=""center"">"
+	m=m&		"<INPUT type=""checkbox"" name=""unicode"""
+	if unicode_flag then
+		m=m & 		" checked> "
+	else
+		m=m & 		" > "
+	end if
+	m=m&	"</td>"
+	m=m&	"<td colspan=""2"" align=""left""> mp3のタグをunicode で書き込む"
+	m=m&	"</td>"
+	m=m&"</tr>"
+
+	'm=m&"<tr>"
+	'm=m&	"<td align=""center"">"
+	'm=m&		"<INPUT type=""checkbox"" name=""delete"""
+	'if flv_delete_flag then
+	'	m=m & 		" checked> "
+	'else
+	'	m=m & 		" > "
+	'end if
+	'm=m&	"</td>"
+	'm=m&	"<td colspan=""2"" align=""left""> 終了時にflvファイルを削除する"
+	'm=m&	"</td>"
+	'm=m&"</tr>"
+
+	'm=m&"<tr>"
+	'm=m&	"<td align=""center""> flvのフォルダ"
+	'm=m&	"</td>"
+	'm=m&	"<td align=""center"">"
+	'm=m&	"<INPUT type=""text"" value="""&flv_folder&""" name=""flv"" size=""100"">"
+	'm=m&	"</td>"
+	'm=m&	"<td align=""center"">"
+	'm=m&	"<INPUT type=""button"" value=""参照"" name=""flv_srch"" " _
+	'			& "onclick=""flv_search()"">" 
+	'm=m&	"<INPUT type=""button"" value=""default"" name=""flv_default"" " _
+	'			& "onclick=""flv_def()"">"
+	'm=m&	"</td>"
+	'm=m&"</tr>"
+
+	m=m&"<tr>"
+	m=m&	"<td align=""center""> mp3のフォルダ"
+	m=m&	"</td>"
+	m=m&	"<td align=""center"">"
+	m=m&	"<INPUT type=""text"" value=""" & mp3_folder & """ name=""mp3"" size=""100"">"
+	m=m&	"</td>"
+	m=m&	"<td align=""center"">"
+	m=m&	"<INPUT type=""button"" value=""参照"" name=""mp3_srch"" " _
+					& "onclick=""mp3_search()"">" 
+	m=m&	"<INPUT type=""button"" value=""default"" name=""mp3_default"" " _
+					& "onclick=""mp3_def()"">"
+	m=m&	"</td>"
+	m=m&"</tr>"
+
+	'm=m&"<tr>"
+	m=m&"<tr>"
+	m=m&	"<td align=""center"">"
+	m=m&		"<INPUT type=""checkbox"" name=""sub_folder"""
+	if sub_folder_flag then
+		m=m & 		" checked> "
+	else
+		m=m & 		" > "
+	end if
+	m=m&	"</td>"
+	m=m&	"<td colspan=""2"" align=""left""> "
+	m=m&		"mp3ファイルを講座ごとのサブフォルダに入れる"
+	m=m&	"</td>"
+	m=m&"</tr>"
+
+	m=m&"<tr>"
+	m=m&	"<td align=""center"">"
+	m=m&		"<INPUT type=""checkbox"" name=""m4a"""
+	if m4a_flag then
+		m=m & 		" checked> "
+	else
+		m=m & 		" > "
+	end if
+	m=m&	"</td>"
+	m=m&	"<td colspan=""2"" align=""left""> "
+	m=m&		"m4aで落とす"
+	m=m&	"</td>"
+	m=m&"</tr>"
+
+	m=m&"<tr>"
+	m=m&	"<td align=""center"">"
+	m=m&		"<INPUT type=""checkbox"" name=""aac"""
+	if aac_flag then
+		m=m & 		" checked> "
+	else
+		m=m & 		" > "
+	end if
+	m=m&	"</td>"
+	m=m&	"<td colspan=""2"" align=""left""> "
+	m=m&		"aacで落とす"
+	m=m&	"</td>"
+	m=m&"</tr>"
+
+	m=m&"<tr>"
+	m=m&	"<td align=""center"">"
+	m=m&		"<INPUT type=""checkbox"" name=""original_name"""
+	if original_name then
+		m=m & 		" checked> "
+	else
+		m=m & 		" > "
+	end if
+	m=m&	"</td>"
+	m=m&	"<td colspan=""2"" align=""left""> "
+	m=m&		"original-nameで落とす"
+	m=m&	"</td>"
+	m=m&"</tr>"
+
+	m=m&"<tr>"
+	m=m&	"<td align=""center"">"
+	m=m&		"<INPUT type=""radio"" name=""mp3den"" value=""" & mp3high &""" "
+	if mp3den = mp3high then
+		m=m & 		" checked> "
+	else
+		m=m & 		" > "
+	end if
+	m=m&	"</td>"
+	m=m&	"<td colspan=""2"" align=""left""> "
+	m=m&		"-ab 48k -ar 24000 で落とす　　高音質　mp3のサイズ5.4MB"
+	m=m&	"</td>"
+	m=m&"</tr>"
+
+	m=m&"<tr>"
+	m=m&	"<td align=""center"">"
+	m=m&		"<INPUT type=""radio"" name=""mp3den"" value=""" & mp3middle &""" "
+	if mp3den = mp3middle then
+		m=m & 		" checked> "
+	else
+		m=m & 		" > "
+	end if
+	m=m&	"</td>"
+	m=m&	"<td colspan=""2"" align=""left""> "
+	m=m&		"-ab 32k -ar 24000 で落とす　　中音質　mp3のサイズ3.6MB"
+	m=m&	"</td>"
+	m=m&"</tr>"
+
+	m=m&"<tr>"
+	m=m&	"<td align=""center"">"
+	m=m&		"<INPUT type=""radio"" name=""mp3den"" value=""" & mp3low &""" "
+	if mp3den = mp3low then
+		m=m & 		" checked> "
+	else
+		m=m & 		" > "
+	end if
+	m=m&	"</td>"
+	m=m&	"<td colspan=""2"" align=""left""> "
+	m=m&		"-ab 16k -ar 12000 で落とす　　低音質　mp3のサイズ1.8MB"
+	m=m&	"</td>"
+	m=m&"</tr>"
+
+
+	m=m&"</table>"
+	m=m&"</center>"
+	m=m&"</FORM>"
+	document.body.innerHTML = m
+	phase=phase_option
+end sub
+
+sub wait_message
+	dim m
+	m = "<BR><BR><BR><pre>       しばらく待って下さい </pre>"
+	document.body.innerHTML = m
+end sub
+
+sub clr_kouza(kouza_select,kouza_dim)
+	dim i
+	for i = 1 to kouza_dim
+		kouza_select(i) = false
+	next
+end sub
+
+sub all_folder_check
+	'if not folder_check(flv_folder) then
+	'	if flv_folder <> flv_default then
+	'		msgbox "flv-folder を default " & flv_default & " にします"
+	'		flv_folder = flv_default
+	'		ini_add section_general, key_flv, """" & flv_folder & """"
+	'		if not foler_check(flv_folder) then
+	'			Window.Close
+	'		end if
+	'	end if
+	'end if
+	if not folder_check(mp3_folder) then
+		if mp3_folder <> mp3_default then
+			msgbox "mp3-folder を default " & mp3_default & " にします"
+			mp3_folder = mp3_default
+			ini_add section_general, key_mp3, """" & mp3_folder & """"
+			if not folder_check(mp3_folder) then
+				Window.Close
+			end if
+		end if
+	end if
+	if sub_folder_flag then
+		if set_kouza_count() > 0 then
+			dim i
+			for i = 1 to nkouza
+				if kouza_select(i) then
+					if not folder_check(mp3_folder & "\" & kouza_name(i)) then
+						msgbox "mp3 の sub-folder を止めます"
+						sub_folder_flag = false
+						ini_add section_general, key_sub_folder, CStr(sub_folder_flag)
+					end if
+				end if
+			next
+		end if
+	end if
+end sub
+
+
+function folder_check(folder_name)
+	dim fso : set fso = CreateObject("Scripting.FileSystemObject")
+	Dim f
+	If (not fso.FolderExists(folder_name)) Then
+		On Error Resume Next
+		Set f = fso.CreateFolder(folder_name)
+		if Err.Number <> 0 then
+			MsgBox "フォルダ """ & folder_name & """ が作れません" & vbNewLine & _
+					"エラー番号 " & CStr(Err.Number) & vbNewLine & Err.Description
+			On Error Goto 0
+			folder_check = false
+			exit function
+		end if
+		On Error Goto 0
+	end if
+	folder_check = true
+	set fso = nothing
+end function
+
+sub flv_delete
+	dim fso : set fso = CreateObject("Scripting.FileSystemObject")
+	dim i,j,MyFile, errcount
+	errcount=0
+	for i=1 to nkouza
+		if kouza_select(i) then
+			for j=1 to nflv(i)
+				if fso.FileExists(flv_name(i,j)) then
+					Set MyFile = fso.GetFile(flv_name(i,j))
+					On Error Resume Next
+					MyFile.Delete
+					if Err.Number <> 0 then
+						MsgBox "file """ & flv_name(i,j) & _
+							""" が削除できません" & vbNewLine & _
+							"エラー番号 " & CStr(Err.Number) & _
+							vbNewLine & Err.Description
+						errcount = errcount + 1
+						if errcount >= 3 then
+							On Error Goto 0
+							exit sub
+						end if
+					end if
+					On Error Goto 0
+				end if
+			next
+		end if
+	next
+	set fso = nothing
+end sub
+
+sub all_exit
+	if Err.Number <> 0 then
+		On Error Goto 0
+		exit sub
+	end if
+	if phase=phase_kouza then
+		kouza_select_check
+		kouza_write
+	elseif phase=phase_option then
+		option_select_check
+		option_write
+	elseif phase=phase_daily then
+		daily_add_ini
+	end if
+	if ini_change then
+		write_ini_file
+	end if
+	'if flv_delete_flag then
+	'	flv_delete
+	'end if
+end sub
+
+Sub HtaExit()
+	all_exit
+End Sub
+
+-->
+</script>
+
+</head>
+<body onUnload="HtaExit()">
+<script Language="VBScript">
+<!--
+'-----------------  main  --------------------------
+	initialize_all
+	kouza_print
+
+-->
+</script>
+</body>
+</html>
